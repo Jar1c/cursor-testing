@@ -1276,6 +1276,8 @@ def validate_password_strength(password):
         return "Password must be at least 8 characters long!"
     if not re.search(r"[A-Z]", password):
         return "Password must contain at least 1 uppercase letter!"
+    if not re.search(r"[a-z]", password):
+        return "Password must contain at least 1 lowercase letter!"
     if not re.search(r"\d", password):
         return "Password must contain at least 1 number!"
     return None
@@ -2652,6 +2654,68 @@ def get_unread_count():
 
 
 
-if __name__ == "__main__":
+@app.route('/change_password', methods=['POST'])
+def change_password():
+    if "user" not in session:
+        return jsonify({"success": False, "message": "Please login first!"})
+    
+    try:
+        data = request.get_json()
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        confirm_password = data.get('confirm_password')
+        
+        # Validation
+        if not current_password or not new_password or not confirm_password:
+            return jsonify({"success": False, "message": "All fields are required!"})
+        
+        if new_password != confirm_password:
+            return jsonify({"success": False, "message": "New passwords do not match!"})
+        
+        if len(new_password) < 8:
+            return jsonify({"success": False, "message": "New password must be at least 8 characters long!"})
+        
+        if current_password == new_password:
+            return jsonify({"success": False, "message": "New password must be different from current password!"})
+        
+        # Get current user
+        user_id = session["user"]["id"]
+        user_data = supabase.table("users").select("*").eq("id", user_id).execute()
+        
+        if not user_data.data:
+            return jsonify({"success": False, "message": "User not found!"})
+        
+        user = user_data.data[0]
+        
+        # Verify current password
+        if not check_password_hash(user["password"], current_password):
+            return jsonify({"success": False, "message": "Current password is incorrect!"})
+        
+        # Validate new password strength
+        password_error = validate_password_strength(new_password)
+        if password_error:
+            return jsonify({"success": False, "message": password_error})
+        
+        # Hash new password
+        new_hashed_password = generate_password_hash(new_password)
+        
+        # Update password in database
+        supabase.table("users").update({
+            "password": new_hashed_password
+        }).eq("id", user_id).execute()
+        
+        # Also update in Supabase Auth
+        try:
+            supabase.auth.update_user({
+                "password": new_password
+            })
+        except Exception as e:
+            print(f"Warning: Could not update Supabase Auth password: {e}")
+        
+        return jsonify({"success": True, "message": "Password changed successfully!"})
+        
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Error changing password: {str(e)}"})
 
+if __name__ == "__main__":
     app.run(host='127.0.0.1', port=5000, debug=True)
